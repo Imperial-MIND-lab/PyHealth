@@ -133,13 +133,11 @@ class SampleBuilder:
               schemas (unless pre-fitted processors were supplied to the
               constructor).
         """
-        # Validate the samples
-        input_keys = set(self.input_schema.keys())
+        # Validate the samples — output keys are required; input keys may
+        # be absent when a modality is missing (e.g. vitals for non-ICU
+        # patients).  Missing input keys are treated as None by processors.
         output_keys = set(self.output_schema.keys())
         for sample in samples:
-            assert input_keys.issubset(
-                sample.keys()
-            ), "Input schema does not match samples."
             assert output_keys.issubset(
                 sample.keys()
             ), "Output schema does not match samples."
@@ -189,7 +187,8 @@ class SampleBuilder:
             raise RuntimeError("SampleBuilder.fit must be called before transform().")
 
         transformed: Dict[str, Any] = {}
-        for key, value in pickle.loads(sample["sample"]).items():
+        raw = pickle.loads(sample["sample"])
+        for key, value in raw.items():
             if key in self._input_processors:
                 # Skip ignored features
                 if isinstance(self._input_processors[key], IgnoreProcessor):
@@ -202,6 +201,13 @@ class SampleBuilder:
                 transformed[key] = self._output_processors[key].process(value)
             else:
                 transformed[key] = value
+
+        # Process input keys missing from the sample (e.g. absent modalities)
+        # by passing None to the processor, which returns zero/empty tensors.
+        for key, proc in self._input_processors.items():
+            if key not in transformed and not isinstance(proc, IgnoreProcessor):
+                transformed[key] = proc.process(None)
+
         return transformed
 
     def save(self, path: str) -> None:
