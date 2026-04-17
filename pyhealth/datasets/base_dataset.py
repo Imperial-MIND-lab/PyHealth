@@ -501,7 +501,7 @@ class BaseDataset(ABC):
         try:
             df = self.load_data()
             with DaskCluster(
-                n_workers=self.num_workers,
+                n_workers=max(self.num_workers, 1),
                 threads_per_worker=1,
                 processes=not in_notebook(),
                 # Use cache_dir for Dask's scratch space to avoid filling up /tmp or home directory
@@ -522,7 +522,14 @@ class BaseDataset(ABC):
                         compute=False,
                     )
                     handle = client.compute(collection)
-                    dask_progress(handle)
+                    if in_notebook():
+                        dask_progress(handle)
+                    else:
+                        import time
+                        while not handle.done():
+                            logger.info(f"Writing parquet... (status: {handle.status})")
+                            time.sleep(5)
+                        logger.info("Parquet write complete.")
                     handle.result()  # type: ignore
                     compute_ok = True  # Data is fully written to disk
         except TimeoutError:
