@@ -525,12 +525,7 @@ class BaseDataset(ABC):
                     if in_notebook():
                         dask_progress(handle)
                     else:
-                        import time
-                        while not handle.done():
-                            logger.info(f"Writing parquet... (status: {handle.status})")
-                            time.sleep(5)
-                        logger.info("Parquet write complete.")
-                    handle.result()  # type: ignore
+                        handle.result()  # blocks until complete
                     compute_ok = True  # Data is fully written to disk
         except TimeoutError:
             if compute_ok:
