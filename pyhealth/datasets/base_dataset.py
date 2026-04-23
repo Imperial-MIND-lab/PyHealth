@@ -964,6 +964,12 @@ class BaseDataset(ABC):
             f"Setting task {task.task_name} for {self.dataset_name} base dataset..."
         )
 
+        def _deterministic_default(obj):
+            """Ensure deterministic serialization (sets have random order)."""
+            if isinstance(obj, set):
+                return sorted(obj)
+            return str(obj)
+
         task_params = json.dumps(
             {
                 **vars(task),
@@ -971,7 +977,7 @@ class BaseDataset(ABC):
                 "output_schema": task.output_schema,
             },
             sort_keys=True,
-            default=str,
+            default=_deterministic_default,
         )
 
         cache_dir = (
