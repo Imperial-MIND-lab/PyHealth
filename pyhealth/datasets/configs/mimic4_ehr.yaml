@@ -108,6 +108,29 @@ tables:
       - "flag"
       - "storetime"
 
+  inputevents:
+    file_path: "icu/inputevents.csv.gz"
+    patient_id: "subject_id"
+    join:
+      - file_path: "icu/d_items.csv.gz"
+        "on": "itemid"
+        how: "inner"
+        columns:
+          - "label"
+          - "category"
+    timestamp: "starttime"
+    attributes:
+      - "hadm_id"
+      - "stay_id"
+      - "itemid"
+      - "label"
+      - "category"
+      - "amount"
+      - "amountuom"
+      - "rate"
+      - "rateuom"
+      - "endtime"
+
   chartevents:
     file_path: "icu/chartevents.csv.gz"
     patient_id: "subject_id"
