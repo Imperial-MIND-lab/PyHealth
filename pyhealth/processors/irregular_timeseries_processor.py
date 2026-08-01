@@ -27,7 +27,8 @@ class IrregularTimeseriesProcessor(FeatureProcessor):
 
     Input:
         A tuple of ``(timestamps, values)`` where:
-        - ``timestamps``: ``List[datetime]`` of observation times
+        - ``timestamps``: either ``List[datetime]`` (legacy) or a numeric
+          sequence the caller has ALREADY anchored and normalised
         - ``values``: ``np.ndarray`` of shape ``(T, F)`` with NaN for missing
 
     Output:
@@ -36,12 +37,26 @@ class IrregularTimeseriesProcessor(FeatureProcessor):
         - ``mask``: ``(max_len, F)`` — 1 where observed, 0 otherwise
         - ``time``: ``(max_len,)`` — timestamps normalized to [0, 1]
 
+    Two timestamp conventions are supported:
+
+    **Numeric (preferred).** The caller passes floats and owns the whole time
+    convention — origin and scale. This is the only way to guarantee that two
+    fields of the same sample (e.g. vitals and clinical notes) end up on ONE
+    clock: the processor sees each field independently and cannot align them.
+    Pass ``time_window_hours=1.0`` so this path is a pure pass-through.
+
+    **Datetime (legacy).** Timestamps are anchored at ``timestamps[0]`` — the
+    first observation *of that field* — and divided by ``time_window_hours``.
+    Because the anchor is per-field, two modalities of the same sample get
+    different origins. Kept only for callers that predate the numeric path;
+    do not use it for multimodal tasks.
+
     Args:
-        max_len: Maximum number of observations to keep. Longer sequences
-            are truncated; shorter ones are zero-padded.
-        time_window_hours: Total time window in hours for normalization
-            (e.g., 48 for a 48-hour prediction window). Timestamps are
-            normalized as ``t / time_window_hours``.
+        max_len: Maximum number of observations to keep. Longer sequences are
+            truncated from the FRONT (the most recent ``max_len`` observations
+            are kept); shorter ones are zero-padded.
+        time_window_hours: Normalisation denominator for the datetime path,
+            and a plain divisor for the numeric path (use 1.0 there).
     """
 
     def __init__(self, max_len: int = 512, time_window_hours: float = 48.0):
@@ -87,22 +102,31 @@ class IrregularTimeseriesProcessor(FeatureProcessor):
         # Replace NaN with 0 in values
         values = np.nan_to_num(values, nan=0.0)
 
-        # Compute normalized timestamps relative to first observation
+        # Normalized timestamps. Numeric input is already anchored by the
+        # caller (one clock for every field of the sample); datetime input
+        # falls back to the legacy per-field anchor.
         if len(timestamps) > 0:
-            start_time = timestamps[0]
-            time_hours = np.array(
-                [(t - start_time).total_seconds() / 3600.0 for t in timestamps],
-                dtype=np.float32,
-            )
+            if isinstance(timestamps[0], (datetime, np.datetime64)):
+                start_time = timestamps[0]
+                time_hours = np.array(
+                    [(t - start_time).total_seconds() / 3600.0 for t in timestamps],
+                    dtype=np.float32,
+                )
+            else:
+                time_hours = np.asarray(timestamps, dtype=np.float32)
             time_norm = time_hours / self.time_window_hours
         else:
             time_norm = np.zeros(T, dtype=np.float32)
 
-        # Truncate if too long
+        # Truncate if too long — keep the MOST RECENT observations.
+        # Keeping the first max_len would drop the end of the window, which for
+        # a prediction task is precisely the informative part: the grid slot the
+        # classifier reads is the last one. Timestamps are sorted ascending, so
+        # a tail slice is the recent window.
         if T > self.max_len:
-            values = values[: self.max_len]
-            mask = mask[: self.max_len]
-            time_norm = time_norm[: self.max_len]
+            values = values[-self.max_len :]
+            mask = mask[-self.max_len :]
+            time_norm = time_norm[-self.max_len :]
             T = self.max_len
 
         # Pad if too short
